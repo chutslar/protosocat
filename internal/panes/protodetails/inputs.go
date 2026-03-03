@@ -2,6 +2,7 @@ package protodetails
 
 import (
 	"fmt"
+	"log"
 	"protosocat/internal/colors"
 	"slices"
 	"strconv"
@@ -13,6 +14,63 @@ import (
 	"charm.land/lipgloss/v2"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
+
+func getEditorHelper(field protoreflect.FieldDescriptor, repeatedValid bool) FieldEditor {
+	if repeatedValid && field.Cardinality() == protoreflect.Repeated {
+		generator := func() FieldEditor {
+			return getEditorHelper(field, false)
+		}
+		return &RepeatedEditor{
+			Editors:   []FieldEditor{generator()},
+			Generator: generator,
+		}
+	}
+	switch field.Kind() {
+	case protoreflect.StringKind, protoreflect.BytesKind:
+		ta := textarea.New()
+		ta.Prompt = ""
+		ta.ShowLineNumbers = false
+		return &TextArea{
+			ta: ta,
+		}
+	case protoreflect.BoolKind:
+		return Checkmark{}
+	case protoreflect.DoubleKind,
+		protoreflect.Fixed32Kind,
+		protoreflect.Fixed64Kind,
+		protoreflect.FloatKind,
+		protoreflect.Int32Kind,
+		protoreflect.Int64Kind,
+		protoreflect.Sfixed32Kind,
+		protoreflect.Sfixed64Kind,
+		protoreflect.Sint32Kind,
+		protoreflect.Sint64Kind,
+		protoreflect.Uint32Kind,
+		protoreflect.Uint64Kind:
+		ti := textinput.New()
+		ti.Prompt = ""
+		if field.Cardinality() == protoreflect.Optional {
+			return &TextInput{
+				ti:        ti,
+				validator: OptionalNumericValidator,
+			}
+		}
+		return &TextInput{
+			ti:        ti,
+			validator: NumericValidator,
+		}
+	default:
+		ti := textinput.New()
+		ti.Prompt = ""
+		return &TextInput{
+			ti: ti,
+		}
+	}
+}
+
+func GetEditor(field protoreflect.FieldDescriptor) FieldEditor {
+	return getEditorHelper(field, true)
+}
 
 var InputStyle lipgloss.Style = lipgloss.NewStyle().
 	Width(40).
@@ -198,6 +256,8 @@ type Checkmark struct {
 }
 
 func (c Checkmark) Update(msg tea.Msg) (FieldEditor, tea.Cmd) {
+
+	log.Println("update was called")
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		if msg.String() == "space" {
@@ -235,7 +295,7 @@ func (c Checkmark) ProtoValue(d protoreflect.FieldDescriptor) (*protoreflect.Val
 }
 
 func (c Checkmark) MarshalJSON() ([]byte, error) {
-	return []byte("Checkmark: " + c.ValueString()), nil
+	return fmt.Appendf(nil, "\"Checkmark = %s\"", c.ValueString()), nil
 }
 
 type RepeatedEditor struct {
@@ -320,4 +380,12 @@ func (r *RepeatedEditor) View() string {
 		strs = append(strs, style.Render(prefix+e.View()))
 	}
 	return lipgloss.JoinVertical(lipgloss.Top, strs...)
+}
+
+func (r RepeatedEditor) CanMoveDownInternally() bool {
+	return r.ActiveIndex < len(r.Editors)-1
+}
+
+func (r RepeatedEditor) CanMoveUpInternally() bool {
+	return r.ActiveIndex > 0
 }

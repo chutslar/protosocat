@@ -44,6 +44,8 @@ func (p *ProtoListPane) UpdateSize(width int, height int) {
 func (p *ProtoListPane) Up() {
 	if p.selectedIndex > 0 {
 		p.selectedIndex--
+	} else {
+		p.selectedIndex = len(p.list) - 1
 	}
 	if p.onlyFavorites && !p.favorites[p.selectedIndex] {
 		p.Up()
@@ -53,6 +55,8 @@ func (p *ProtoListPane) Up() {
 func (p *ProtoListPane) Down() {
 	if p.selectedIndex < len(p.list)-1 {
 		p.selectedIndex++
+	} else {
+		p.selectedIndex = 0
 	}
 	if p.onlyFavorites && !p.favorites[p.selectedIndex] {
 		p.Down()
