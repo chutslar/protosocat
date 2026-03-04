@@ -19,9 +19,8 @@ protosocat when done will be able to serve as either the server
 
 ## Works:
 
-- List the protobufs in the directory
-- View a protobuf and create the message
-- View the message you created as json
+- View and create protobufs based on the definitions
+- Send and receive over websocket
 
 ## Still need to do:
 
