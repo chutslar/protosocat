@@ -1,6 +1,7 @@
 package protodetails
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -160,7 +161,39 @@ func GetInputForMessage(message protoreflect.MessageDescriptor) *FieldInput {
 }
 
 func GetInputForField(field protoreflect.FieldDescriptor, parent *FieldInput, indexInParent int) *FieldInput {
-	if field.Kind() == protoreflect.MessageKind {
+	if field.Cardinality() == protoreflect.Repeated {
+		input := &FieldInput{
+			Descriptor: DebugFieldDescriptor{
+				fd: field,
+			},
+			parent:        parent,
+			IndexInParent: indexInParent,
+		}
+
+		var firstElement *FieldInput
+		if field.Kind() == protoreflect.MessageKind {
+			firstElement = GetInputForMessage(field.Message())
+			firstElement.Descriptor = DebugFieldDescriptor{
+				fd: field.Message(),
+			}
+			firstElement.parent = input
+			firstElement.IndexInParent = 0
+		} else {
+			editor := GetEditor(field)
+			firstElement = &FieldInput{
+				Input: editor,
+				Descriptor: DebugFieldDescriptor{
+					fd: field,
+				},
+				parent:        input,
+				IndexInParent: 0,
+			}
+		}
+
+		input.SubFields = []*FieldInput{firstElement}
+
+		return input
+	} else if field.Kind() == protoreflect.MessageKind {
 		input := GetInputForMessage(field.Message())
 		input.Descriptor = DebugFieldDescriptor{
 			fd: field,
@@ -209,12 +242,12 @@ func (pd *ProtoDetailsPane) SetMessage(message *protos.Message) {
 			pd.active.Input.Focus()
 		}
 
-		// jsonOutput, err := json.MarshalIndent(inputs, "", "  ")
-		// if err != nil {
-		// 	log.Printf("Couldn't serialize inputs: %v\n", err)
-		// } else {
-		// 	log.Println(string(jsonOutput))
-		// }
+		jsonOutput, err := json.MarshalIndent(inputs, "", "  ")
+		if err != nil {
+			log.Printf("Couldn't serialize inputs: %v\n", err)
+		} else {
+			log.Println(string(jsonOutput))
+		}
 	}
 }
 
@@ -302,6 +335,15 @@ func (pd *ProtoDetailsPane) Down() {
 	}
 }
 
+func MessageHasFields(msg *dynamicpb.Message) bool {
+	hasFields := false
+	msg.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		hasFields = true
+		return false
+	})
+	return hasFields
+}
+
 func CreateNewMessageFromInput(md protoreflect.MessageDescriptor, field *FieldInput) (*dynamicpb.Message, error) {
 	if field == nil {
 		return nil, errors.New("invalid nil field input")
@@ -323,7 +365,10 @@ func CreateNewMessageFromInput(md protoreflect.MessageDescriptor, field *FieldIn
 					if err != nil {
 						return nil, fmt.Errorf("%s: %w", chosenFD.Name(), err)
 					}
-					msg.Set(chosenFD, protoreflect.ValueOfMessage(childMessage))
+
+					if MessageHasFields(childMessage) {
+						msg.Set(chosenFD, protoreflect.ValueOfMessage(childMessage))
+					}
 				} else if input.Input != nil {
 					v, err := input.Input.ProtoValue(chosenFD)
 					if err != nil {
@@ -337,24 +382,39 @@ func CreateNewMessageFromInput(md protoreflect.MessageDescriptor, field *FieldIn
 				return nil, fmt.Errorf("%s: oneof value was not chosen", descriptor.Name())
 			}
 		case protoreflect.FieldDescriptor:
-			if descriptor.Kind() == protoreflect.MessageKind {
+			if descriptor.Cardinality() == protoreflect.Repeated {
+				list := msg.Mutable(descriptor).List()
+				if descriptor.Kind() == protoreflect.MessageKind {
+					for _, element := range subField.SubFields {
+						childMsg, err := CreateNewMessageFromInput(descriptor.Message(), element)
+						if err != nil {
+							return nil, fmt.Errorf("%s: invalid repeated value: %w", descriptor.Name(), err)
+						}
+
+						if MessageHasFields(childMsg) {
+							list.Append(protoreflect.ValueOfMessage(childMsg))
+						}
+					}
+				} else {
+					for _, element := range subField.SubFields {
+						v, err := element.Input.ProtoValue(descriptor)
+						if err != nil {
+							return nil, fmt.Errorf("%s: invalid repeated value: %w", descriptor.Name(), err)
+						}
+
+						if !v.Equal(descriptor.Default()) {
+							list.Append(*v)
+						}
+					}
+				}
+			} else if descriptor.Kind() == protoreflect.MessageKind {
 				childMessage, err := CreateNewMessageFromInput(descriptor.Message(), subField)
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", descriptor.Name(), err)
 				}
-				log.Printf("descriptor has type: %s %s\n", descriptor.Cardinality(), descriptor.Kind())
-				msg.Set(descriptor, protoreflect.ValueOf(childMessage))
-			} else if descriptor.Cardinality() == protoreflect.Repeated {
-				input := subField.Input
-				r, ok := input.(*RepeatedEditor)
-				if ok {
-					list := msg.Mutable(descriptor).List()
-					err := r.AppendTo(list, descriptor)
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, fmt.Errorf("field is repeated but input is not: %s", descriptor.Name())
+
+				if MessageHasFields(childMessage) {
+					msg.Set(descriptor, protoreflect.ValueOf(childMessage))
 				}
 			} else {
 				v, err := subField.Input.ProtoValue(descriptor)
@@ -405,7 +465,9 @@ func (pd ProtoDetailsPane) Update(msg tea.Msg) (ProtoDetailsPane, tea.Cmd) {
 					return pd, nil
 				}
 				opts := protojson.MarshalOptions{
-					Indent: "  ",
+					Indent:          "  ",
+					UseProtoNames:   true,
+					EmitUnpopulated: true,
 				}
 				json, err := opts.Marshal(pd.createdMessage)
 				if err != nil {
@@ -496,14 +558,22 @@ func (pd ProtoDetailsPane) ViewField(field *FieldInput) ViewFieldResult {
 
 		var header string
 		isMessage := false
+		isRepeated := false
 		switch descriptor := fieldDescriptor.(type) {
 		case protoreflect.OneofDescriptor:
 			header = fmt.Sprintf("%s oneof:", descriptor.Name())
 			isMessage = true
+		case protoreflect.MessageDescriptor:
+			header = fmt.Sprintf("entry %d (%s):", field.IndexInParent, descriptor.Name())
+			isMessage = true
 		case protoreflect.FieldDescriptor:
 			isMessage = !isOneofOption && descriptor.Kind() == protoreflect.MessageKind
+			isRepeated = descriptor.Cardinality() == protoreflect.Repeated
 			if isMessage {
 				kindStr := string(descriptor.Message().FullName())
+				header = fmt.Sprintf("%s (%s %s):", descriptor.Name(), descriptor.Cardinality().String(), kindStr)
+			} else if isRepeated {
+				kindStr := descriptor.Kind().String()
 				header = fmt.Sprintf("%s (%s %s):", descriptor.Name(), descriptor.Cardinality().String(), kindStr)
 			} else {
 				kindStr := descriptor.Kind().String()
@@ -517,6 +587,22 @@ func (pd ProtoDetailsPane) ViewField(field *FieldInput) ViewFieldResult {
 		}
 
 		if isMessage {
+			var strs []string
+			offsetBeforeActive = lipgloss.Height(header)
+			strs = append(strs, header)
+			for i := range field.SubFields {
+				res := pd.ViewField(field.SubFields[i])
+				strs = append(strs, res.content)
+				if !foundActive {
+					offsetBeforeActive += res.offsetBeforeActive
+					if res.foundActive {
+						foundActive = true
+					}
+				}
+			}
+
+			s = lipgloss.JoinVertical(lipgloss.Top, strs...)
+		} else if isRepeated {
 			var strs []string
 			offsetBeforeActive = lipgloss.Height(header)
 			strs = append(strs, header)
@@ -575,8 +661,9 @@ func (pd ProtoDetailsPane) View() string {
 			main = pd.messageError.Error()
 		} else {
 			opt := protojson.MarshalOptions{
-				Indent:        "  ",
-				UseProtoNames: true,
+				Indent:          "  ",
+				UseProtoNames:   true,
+				EmitUnpopulated: true,
 			}
 			output, err := opt.Marshal(pd.createdMessage)
 			if err != nil {

@@ -139,7 +139,9 @@ func ParseData(data []byte, protobuf protos.Message) tea.Cmd {
 			}
 		}
 		opts := protojson.MarshalOptions{
-			Indent: "  ",
+			Indent:          "  ",
+			UseProtoNames:   true,
+			EmitUnpopulated: true,
 		}
 		text, err := opts.Marshal(msg)
 		if err != nil {

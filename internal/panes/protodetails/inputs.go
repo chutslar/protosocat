@@ -15,16 +15,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-func getEditorHelper(field protoreflect.FieldDescriptor, repeatedValid bool) FieldEditor {
-	if repeatedValid && field.Cardinality() == protoreflect.Repeated {
-		generator := func() FieldEditor {
-			return getEditorHelper(field, false)
-		}
-		return &RepeatedEditor{
-			Editors:   []FieldEditor{generator()},
-			Generator: generator,
-		}
-	}
+func GetEditor(field protoreflect.FieldDescriptor) FieldEditor {
 	switch field.Kind() {
 	case protoreflect.StringKind, protoreflect.BytesKind:
 		ta := textarea.New()
@@ -66,10 +57,6 @@ func getEditorHelper(field protoreflect.FieldDescriptor, repeatedValid bool) Fie
 			ti: ti,
 		}
 	}
-}
-
-func GetEditor(field protoreflect.FieldDescriptor) FieldEditor {
-	return getEditorHelper(field, true)
 }
 
 var InputStyle lipgloss.Style = lipgloss.NewStyle().
@@ -192,7 +179,7 @@ func (t TextInput) ProtoValue(d protoreflect.FieldDescriptor) (*protoreflect.Val
 }
 
 func (t TextInput) MarshalJSON() ([]byte, error) {
-	return []byte("TextInput: " + t.ValueString()), nil
+	return fmt.Appendf(nil, "\"TextInput='%s'\"", t.ValueString()), nil
 }
 
 // TextArea is used for protobuf numeric and enum fields.
@@ -247,7 +234,7 @@ func (t TextArea) ProtoValue(d protoreflect.FieldDescriptor) (*protoreflect.Valu
 }
 
 func (t TextArea) MarshalJSON() ([]byte, error) {
-	return []byte("TextArea: " + t.ValueString()), nil
+	return fmt.Appendf(nil, "\"TextArea='%s'\"", t.ValueString()), nil
 }
 
 // Checkmark is used for protobuf boolean fields.
