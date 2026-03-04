@@ -1,7 +1,6 @@
 package protodetails
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -13,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
@@ -104,9 +104,11 @@ type ProtoDetailsPane struct {
 	showCreatedMessage bool
 	messageError       error
 	viewport           viewport.Model
+	Send               chan []byte
+	SaveSent           chan string
 }
 
-func NewProtoDetailsPane() ProtoDetailsPane {
+func NewProtoDetailsPane(sendChan chan []byte, saveSent chan string) ProtoDetailsPane {
 	return ProtoDetailsPane{
 		style: lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
@@ -114,6 +116,8 @@ func NewProtoDetailsPane() ProtoDetailsPane {
 			Padding(1).
 			Margin(1),
 		viewport: viewport.New(),
+		Send:     sendChan,
+		SaveSent: saveSent,
 	}
 }
 
@@ -201,14 +205,16 @@ func (pd *ProtoDetailsPane) SetMessage(message *protos.Message) {
 		inputs := GetInputForMessage(message.Descriptor)
 		pd.rootField = inputs
 		pd.active = GetFirstInput(pd.rootField)
-		pd.active.Input.Focus()
-
-		jsonOutput, err := json.MarshalIndent(inputs, "", "  ")
-		if err != nil {
-			log.Printf("Couldn't serialize inputs: %v\n", err)
-		} else {
-			log.Println(string(jsonOutput))
+		if pd.active.Input != nil {
+			pd.active.Input.Focus()
 		}
+
+		// jsonOutput, err := json.MarshalIndent(inputs, "", "  ")
+		// if err != nil {
+		// 	log.Printf("Couldn't serialize inputs: %v\n", err)
+		// } else {
+		// 	log.Println(string(jsonOutput))
+		// }
 	}
 }
 
@@ -304,8 +310,8 @@ func CreateNewMessageFromInput(md protoreflect.MessageDescriptor, field *FieldIn
 	for _, subField := range field.SubFields {
 		switch descriptor := subField.Descriptor.fd.(type) {
 		case protoreflect.OneofDescriptor:
-			output, _ := json.Marshal(subField)
-			log.Printf("oneof: %s", string(output))
+			// output, _ := json.Marshal(subField)
+			// log.Printf("oneof: %s", string(output))
 			if subField.SelectedOneof != nil {
 				input := subField.SubFields[0]
 				chosenFD, ok := input.Descriptor.fd.(protoreflect.FieldDescriptor)
@@ -336,7 +342,8 @@ func CreateNewMessageFromInput(md protoreflect.MessageDescriptor, field *FieldIn
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", descriptor.Name(), err)
 				}
-				msg.Set(descriptor, protoreflect.ValueOfMessage(childMessage))
+				log.Printf("descriptor has type: %s %s\n", descriptor.Cardinality(), descriptor.Kind())
+				msg.Set(descriptor, protoreflect.ValueOf(childMessage))
 			} else if descriptor.Cardinality() == protoreflect.Repeated {
 				input := subField.Input
 				r, ok := input.(*RepeatedEditor)
@@ -391,8 +398,23 @@ func (pd ProtoDetailsPane) Update(msg tea.Msg) (ProtoDetailsPane, tea.Cmd) {
 			pd.Down()
 			return pd, nil
 		case "ctrl+s":
-			if pd.showCreatedMessage {
-				// TODO send message
+			if pd.showCreatedMessage && pd.messageError == nil {
+				binary, err := proto.Marshal(pd.createdMessage)
+				if err != nil {
+					pd.messageError = err
+					return pd, nil
+				}
+				opts := protojson.MarshalOptions{
+					Indent: "  ",
+				}
+				json, err := opts.Marshal(pd.createdMessage)
+				if err != nil {
+					pd.messageError = err
+					return pd, nil
+				}
+
+				pd.Send <- binary
+				pd.SaveSent <- string(json)
 			} else {
 				err := pd.CreateNewMessageFromInputs()
 				if err != nil {

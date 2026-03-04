@@ -25,11 +25,13 @@ protosocat when done will be able to serve as either the server
 
 ## Still need to do:
 
-- Wait for and then establish websocket connection
-- Send created messages
-- Keep scrollable list of messages
+- Fix repeated messages
+- Add support for enums
+- Scroll through messages
+- Add some nice styling
 
 ## Acknowledgements
 
 - [Charm](https://charm.land/) - TUI library
 - [Buf](https://github.com/bufbuild/protocompile) - Go protobuf compiler
+- [coder/websocket](https://github.com/coder/websocket) - websocket library

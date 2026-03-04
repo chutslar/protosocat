@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,9 +12,11 @@ import (
 	"protosocat/internal/panes/protodetails"
 	"protosocat/internal/panes/protolist"
 	"protosocat/internal/protos"
+	"protosocat/internal/ws"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	flag "github.com/spf13/pflag"
 )
 
 type Model struct {
@@ -25,7 +28,14 @@ type Model struct {
 	height           int
 }
 
-func NewModel(directory *string) (*Model, error) {
+func NewModel(
+	directory *string,
+	receiveType string,
+	sendChan chan []byte,
+	receiveChan chan []byte,
+	errorChan chan error,
+	infoChan chan string,
+) (*Model, error) {
 	var wd string
 	if directory != nil {
 		wd = *directory
@@ -45,25 +55,37 @@ func NewModel(directory *string) (*Model, error) {
 		return nil, err
 	}
 
-	protos, err := parser.Parse()
+	protobufs, err := parser.Parse()
 	if err != nil {
 		return nil, err
 	}
 
-	protoListPane := protolist.NewProtoListPane(protos, wd)
+	var receiveProtobuf *protos.Message
+	for _, protobuf := range protobufs {
+		if string(protobuf.Descriptor.FullName()) == receiveType {
+			receiveProtobuf = &protobuf
+		}
+	}
+	if receiveProtobuf == nil {
+		return nil, fmt.Errorf("receive-type protobuf not found: %s", receiveType)
+	}
 
-	messagePane := messages.NewMessagePane()
+	savedSent := make(chan string, 8)
+
+	protoListPane := protolist.NewProtoListPane(protobufs, wd)
+	protoDetailsPane := protodetails.NewProtoDetailsPane(sendChan, savedSent)
+	messagePane := messages.NewMessagePane(sendChan, receiveChan, errorChan, savedSent, infoChan, *receiveProtobuf)
 
 	return &Model{
 		protoListPane:    protoListPane,
-		protoDetailsPane: protodetails.NewProtoDetailsPane(),
+		protoDetailsPane: protoDetailsPane,
 		showDetails:      false,
 		messagePane:      messagePane,
 	}, nil
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.messagePane.Init()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -71,8 +93,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.protoListPane.UpdateSize(m.width/2, m.height)
-		m.protoDetailsPane.UpdateSize(m.width/2, m.height)
+
+		halfWidth := m.width / 2
+		m.protoListPane.UpdateSize(halfWidth, m.height)
+		m.protoDetailsPane.UpdateSize(halfWidth, m.height)
+		m.messagePane.UpdateSize(halfWidth, m.height)
+		m.messagePane.UpdateSize(halfWidth, m.height)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -86,13 +112,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.showDetails = true
 	}
 
-	var cmd tea.Cmd
+	var protoCmd tea.Cmd
+	var messageCmd tea.Cmd
 	if m.showDetails {
-		m.protoDetailsPane, cmd = m.protoDetailsPane.Update(msg)
+		m.protoDetailsPane, protoCmd = m.protoDetailsPane.Update(msg)
 	} else {
-		m.protoListPane, cmd = m.protoListPane.Update(msg)
+		m.protoListPane, protoCmd = m.protoListPane.Update(msg)
 	}
-	return m, cmd
+	m.messagePane, messageCmd = m.messagePane.Update(msg)
+	return m, tea.Batch(protoCmd, messageCmd)
 }
 
 func (m Model) View() tea.View {
@@ -126,20 +154,73 @@ func main() {
 		_ = f.Close()
 	}()
 
-	var directory *string
-	if len(os.Args) > 1 {
-		directory = &os.Args[1]
-	} else {
-		directory = nil
+	var port int
+	var connectionURL string
+	var receiveType string
+	flag.IntVarP(&port, "listen", "l", -1, "port to listen on")
+	flag.StringVarP(&connectionURL, "connect", "c", "", "websocket server connection URL")
+	flag.StringVar(&receiveType, "receive-type", "", "full name of the type of messages to be received")
+
+	flag.Parse()
+
+	if port >= 0 && connectionURL != "" {
+		log.Fatalln("error: -l and -c are mutually exclusive")
+	}
+	if port < 0 && connectionURL == "" {
+		log.Fatalln("error: must provide either -l or -c")
 	}
 
-	m, err := NewModel(directory)
+	if receiveType == "" {
+		log.Fatalln("error: --receive-type must be provided")
+	}
+
+	directory := flag.Arg(0)
+
+	sendChan := make(chan []byte, 8)
+	receiveChan := make(chan []byte, 8)
+	errorChan := make(chan error, 8)
+	infoChan := make(chan string, 8)
+
+	m, err := NewModel(
+		emptyToNil(directory),
+		receiveType,
+		sendChan,
+		receiveChan,
+		errorChan,
+		infoChan)
 	if err != nil {
 		log.Fatalln("Failed to build model", err)
+	}
+
+	if port < 0 {
+		client := ws.WSClient{
+			URL:     connectionURL,
+			Send:    sendChan,
+			Receive: receiveChan,
+			Error:   errorChan,
+			Info:    infoChan,
+		}
+		client.Run()
+	} else {
+		server := ws.WSServer{
+			Port:    port,
+			Send:    sendChan,
+			Receive: receiveChan,
+			Errors:  errorChan,
+			Info:    infoChan,
+		}
+		server.Run()
 	}
 
 	p := tea.NewProgram(m)
 	if _, err = p.Run(); err != nil {
 		log.Fatalln("Failed while running", err)
 	}
+}
+
+func emptyToNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

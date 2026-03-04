@@ -7,6 +7,8 @@ require (
 	charm.land/bubbletea/v2 v2.0.0
 	charm.land/lipgloss/v2 v2.0.0
 	github.com/bufbuild/protocompile v0.14.1
+	github.com/coder/websocket v1.8.14
+	github.com/spf13/pflag v1.0.10
 	google.golang.org/protobuf v1.36.11
 )
 
