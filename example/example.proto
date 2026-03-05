@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package example;
+
+import "google/protobuf/timestamp.proto";
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+}
+
+message Inner {
+  string value = 1;
+}
+
+message TestMessage {
+  // scalar types
+  string text = 1;
+  int32 number = 2;
+  float decimal = 3;
+  bool flag = 4;
+  bytes raw = 5;
+
+  // enum
+  Status status = 6;
+
+  // nested message
+  Inner inner = 7;
+
+  // well-known type
+  google.protobuf.Timestamp created_at = 8;
+
+  // repeated
+  repeated string tags = 9;
+  repeated Inner items = 10;
+
+  // oneof
+  oneof payload {
+    string text_payload = 11;
+    int32 int_payload = 12;
+    Inner message_payload = 13;
+  }
+}

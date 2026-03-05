@@ -24,8 +24,7 @@ protosocat when done will be able to serve as either the server
 
 ## Still need to do:
 
-- Fix repeated messages
-- Add support for enums
+- Add a way to specify the websocket server base path
 - Scroll through messages
 - Add some nice styling
 

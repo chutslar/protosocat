@@ -76,6 +76,14 @@ func (f *FieldInput) IsOneof() bool {
 	return isOneof
 }
 
+func (f *FieldInput) IsRepeatedElement() bool {
+	if f.parent == nil {
+		return false
+	}
+	parentDescriptor, ok := f.parent.Descriptor.fd.(protoreflect.FieldDescriptor)
+	return ok && parentDescriptor.Cardinality() == protoreflect.Repeated
+}
+
 func (f *FieldInput) UpdateParentOneof() {
 	_, isCheckmark := f.Input.(Checkmark)
 	isOneof := f.parent.IsOneof()
@@ -397,6 +405,9 @@ func CreateNewMessageFromInput(md protoreflect.MessageDescriptor, field *FieldIn
 					}
 				} else {
 					for _, element := range subField.SubFields {
+						if element.Input.IsEmpty() {
+							continue
+						}
 						v, err := element.Input.ProtoValue(descriptor)
 						if err != nil {
 							return nil, fmt.Errorf("%s: invalid repeated value: %w", descriptor.Name(), err)
@@ -568,7 +579,7 @@ func (pd ProtoDetailsPane) ViewField(field *FieldInput) ViewFieldResult {
 			isMessage = true
 		case protoreflect.FieldDescriptor:
 			isMessage = !isOneofOption && descriptor.Kind() == protoreflect.MessageKind
-			isRepeated = descriptor.Cardinality() == protoreflect.Repeated
+			isRepeated = descriptor.Cardinality() == protoreflect.Repeated && !field.IsRepeatedElement()
 			if isMessage {
 				kindStr := string(descriptor.Message().FullName())
 				header = fmt.Sprintf("%s (%s %s):", descriptor.Name(), descriptor.Cardinality().String(), kindStr)

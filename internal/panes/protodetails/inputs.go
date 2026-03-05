@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"protosocat/internal/colors"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -50,6 +49,8 @@ func GetEditor(field protoreflect.FieldDescriptor) FieldEditor {
 			ti:        ti,
 			validator: NumericValidator,
 		}
+	case protoreflect.EnumKind:
+		return NewEnumPicker(field.Enum())
 	default:
 		ti := textinput.New()
 		ti.Prompt = ""
@@ -85,6 +86,7 @@ type FieldEditor interface {
 	Blur()
 	Validate() bool
 	ProtoValue(protoreflect.FieldDescriptor) (*protoreflect.Value, error)
+	IsEmpty() bool
 }
 
 // TextInput is used for protobuf strings and bytes fields.
@@ -178,6 +180,10 @@ func (t TextInput) ProtoValue(d protoreflect.FieldDescriptor) (*protoreflect.Val
 	}
 }
 
+func (t TextInput) IsEmpty() bool {
+	return t.ti.Value() == ""
+}
+
 func (t TextInput) MarshalJSON() ([]byte, error) {
 	return fmt.Appendf(nil, "\"TextInput='%s'\"", t.ValueString()), nil
 }
@@ -233,6 +239,10 @@ func (t TextArea) ProtoValue(d protoreflect.FieldDescriptor) (*protoreflect.Valu
 	}
 }
 
+func (t TextArea) IsEmpty() bool {
+	return t.ta.Value() == ""
+}
+
 func (t TextArea) MarshalJSON() ([]byte, error) {
 	return fmt.Appendf(nil, "\"TextArea='%s'\"", t.ValueString()), nil
 }
@@ -281,98 +291,106 @@ func (c Checkmark) ProtoValue(d protoreflect.FieldDescriptor) (*protoreflect.Val
 	return nil, fmt.Errorf("invalid kind for bool field: %s", d.Kind())
 }
 
+func (c Checkmark) IsEmpty() bool {
+	return false
+}
+
 func (c Checkmark) MarshalJSON() ([]byte, error) {
 	return fmt.Appendf(nil, "\"Checkmark = %s\"", c.ValueString()), nil
 }
 
-type RepeatedEditor struct {
-	Editors     []FieldEditor
-	ActiveIndex int
-	Generator   func() FieldEditor
+type EnumPicker struct {
+	options         []string
+	selectedIndex   int
+	maxOptionLength int
 }
 
-func (r *RepeatedEditor) AppendTo(list protoreflect.List, fd protoreflect.FieldDescriptor) error {
-	for _, editor := range r.Editors {
-		v, err := editor.ProtoValue(fd)
-		if err != nil {
-			return err
-		}
-		list.Append(*v)
+func NewEnumPicker(d protoreflect.EnumDescriptor) EnumPicker {
+	var options []string
+	maxOptionLength := 0
+	for i := range d.Values().Len() {
+		option := string(d.Values().Get(i).Name())
+		maxOptionLength = max(len(option), maxOptionLength)
+		options = append(options, option)
 	}
-	return nil
+
+	return EnumPicker{
+		options:         options,
+		selectedIndex:   0,
+		maxOptionLength: maxOptionLength,
+	}
 }
 
-func (r *RepeatedEditor) ActiveEditor() FieldEditor {
-	return r.Editors[r.ActiveIndex]
+func (e *EnumPicker) Left() {
+	if e.selectedIndex > 0 {
+		e.selectedIndex--
+	}
 }
 
-func (r *RepeatedEditor) Blur() {
-	r.ActiveEditor().Blur()
+func (e *EnumPicker) Right() {
+	if e.selectedIndex < len(e.options)-1 {
+		e.selectedIndex++
+	}
 }
 
-func (r *RepeatedEditor) Focus() {
-	r.ActiveEditor().Focus()
+func (e EnumPicker) Blur() {
+
 }
 
-func (r *RepeatedEditor) AddEditor() {
-	r.Editors = slices.Insert(r.Editors, r.ActiveIndex+1, r.Generator())
+func (e EnumPicker) Focus() {
+
 }
 
-func (r *RepeatedEditor) Update(msg tea.Msg) (FieldEditor, tea.Cmd) {
+func (e EnumPicker) Update(msg tea.Msg) (FieldEditor, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "ctrl+n":
-			r.AddEditor()
-			return r, nil
+		case "left":
+			e.Left()
+		case "right":
+			e.Right()
 		}
 	}
-
-	var cmd tea.Cmd
-	r.Editors[r.ActiveIndex], cmd = r.ActiveEditor().Update(msg)
-	return r, cmd
+	return e, nil
 }
 
-func (r *RepeatedEditor) Validate() bool {
-	// Validation logic must be handled in own view
+func (e EnumPicker) Validate() bool {
 	return true
 }
 
-func (r *RepeatedEditor) ValueString() string {
-	var s strings.Builder
-	for i, e := range r.Editors {
-		s.WriteString(e.ValueString())
-		if i != len(r.Editors)-1 {
-			s.WriteString(", ")
-		}
+func (e EnumPicker) ValueString() string {
+	return e.options[e.selectedIndex]
+}
+
+func (e EnumPicker) View() string {
+	prefix := "  "
+	if e.selectedIndex > 0 {
+		prefix = "◀ "
 	}
-	return s.String()
-}
-
-func (r RepeatedEditor) ProtoValue(d protoreflect.FieldDescriptor) (*protoreflect.Value, error) {
-	return nil, fmt.Errorf("bug: should have called AppendTo")
-}
-
-func (r *RepeatedEditor) View() string {
-	var strs []string
-	for i, e := range r.Editors {
-		prefix := ""
-		if i == r.ActiveIndex {
-			prefix = "> "
-		}
-		style := InputStyle
-		if !e.Validate() {
-			style = style.BorderForeground(colors.ErrorColor)
-		}
-		strs = append(strs, style.Render(prefix+e.View()))
+	suffix := ""
+	if e.selectedIndex < len(e.options)-1 {
+		suffix = " ▶"
 	}
-	return lipgloss.JoinVertical(lipgloss.Top, strs...)
+
+	option := e.options[e.selectedIndex]
+	if len(option) < e.maxOptionLength {
+		padding := e.maxOptionLength - len(option)
+		leftPad := padding / 2
+		rightPad := padding - leftPad
+		option = strings.Repeat(" ", leftPad) + option + strings.Repeat(" ", rightPad)
+	}
+
+	return fmt.Sprintf("%s%s%s", prefix, option, suffix)
 }
 
-func (r RepeatedEditor) CanMoveDownInternally() bool {
-	return r.ActiveIndex < len(r.Editors)-1
+func (e EnumPicker) ProtoValue(d protoreflect.FieldDescriptor) (*protoreflect.Value, error) {
+	if d.Kind() == protoreflect.EnumKind {
+		v := protoreflect.ValueOfEnum(protoreflect.EnumNumber(e.selectedIndex))
+		return &v, nil
+	}
+	return nil, fmt.Errorf("invalid kind for enum field: %s", d.Kind())
 }
 
-func (r RepeatedEditor) CanMoveUpInternally() bool {
-	return r.ActiveIndex > 0
+func (e EnumPicker) IsEmpty() bool {
+	return false
 }
