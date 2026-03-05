@@ -24,7 +24,6 @@ protosocat when done will be able to serve as either the server
 
 ## Still need to do:
 
-- Add a way to specify the websocket server base path
 - Scroll through messages
 - Add some nice styling
 

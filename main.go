@@ -157,9 +157,11 @@ func main() {
 	var port int
 	var connectionURL string
 	var receiveType string
+	var basePath string
 	flag.IntVarP(&port, "listen", "l", -1, "port to listen on")
 	flag.StringVarP(&connectionURL, "connect", "c", "", "websocket server connection URL")
 	flag.StringVar(&receiveType, "receive-type", "", "full name of the type of messages to be received")
+	flag.StringVarP(&basePath, "base-path", "b", "", "path the websocket will be served on")
 
 	flag.Parse()
 
@@ -193,6 +195,10 @@ func main() {
 	}
 
 	if port < 0 {
+		if !strings.HasPrefix(connectionURL, "ws://") {
+			connectionURL = "ws://" + connectionURL
+		}
+
 		client := ws.WSClient{
 			URL:     connectionURL,
 			Send:    sendChan,
@@ -203,11 +209,12 @@ func main() {
 		client.Run()
 	} else {
 		server := ws.WSServer{
-			Port:    port,
-			Send:    sendChan,
-			Receive: receiveChan,
-			Errors:  errorChan,
-			Info:    infoChan,
+			Port:     port,
+			BasePath: basePath,
+			Send:     sendChan,
+			Receive:  receiveChan,
+			Errors:   errorChan,
+			Info:     infoChan,
 		}
 		server.Run()
 	}

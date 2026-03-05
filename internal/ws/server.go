@@ -10,11 +10,12 @@ import (
 )
 
 type WSServer struct {
-	Port    int
-	Send    chan []byte
-	Receive chan []byte
-	Errors  chan error
-	Info    chan string
+	Port     int
+	BasePath string
+	Send     chan []byte
+	Receive  chan []byte
+	Errors   chan error
+	Info     chan string
 }
 
 func (s *WSServer) HandleWebsocket() http.HandlerFunc {
@@ -52,8 +53,12 @@ func (s *WSServer) HandleWebsocket() http.HandlerFunc {
 }
 
 func (s *WSServer) Run() {
+	path := "/"
+	if s.BasePath != "" {
+		path = s.BasePath
+	}
 	go func() {
-		http.HandleFunc("/ws", s.HandleWebsocket())
+		http.HandleFunc(path, s.HandleWebsocket())
 
 		s.Info <- fmt.Sprintf("Server running on port %d", s.Port)
 		err := http.ListenAndServe(fmt.Sprintf(":%d", s.Port), nil)
