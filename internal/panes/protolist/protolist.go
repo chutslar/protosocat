@@ -15,10 +15,11 @@ type ProtoListPane struct {
 	favorites     []bool
 	onlyFavorites bool
 	selectedIndex int
-	style         lipgloss.Style
+	style         panes.ToggleStyle
 	headerStyle   lipgloss.Style
 	itemStyle     lipgloss.Style
 	directory     string
+	IsActiveTab   bool
 }
 
 func NewProtoListPane(pl []protos.Message, directory string) ProtoListPane {
@@ -26,15 +27,26 @@ func NewProtoListPane(pl []protos.Message, directory string) ProtoListPane {
 		list:          pl,
 		favorites:     make([]bool, len(pl)),
 		onlyFavorites: false,
-		style: lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(colors.BorderColor).
-			Padding(1).
-			Margin(1),
+		style: panes.ToggleStyle{
+			ActiveStyle: lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(colors.BorderColor).
+				Padding(1).
+				Margin(1),
+			InactiveStyle: lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(colors.InactiveColor).
+				Padding(1).
+				Margin(1),
+		},
 		headerStyle: lipgloss.NewStyle().Underline(true),
 		itemStyle:   lipgloss.NewStyle().PaddingLeft(1).MarginTop(1),
 		directory:   directory,
 	}
+}
+
+func (p *ProtoListPane) SetActive(active bool) {
+	p.IsActiveTab = active
 }
 
 func (p *ProtoListPane) UpdateSize(width int, height int) {
@@ -107,8 +119,6 @@ func (p ProtoListPane) ViewProto(index int) string {
 }
 
 func (p ProtoListPane) View() string {
-	// return p.style.Render(p.list.View())
-
 	var strs []string
 	header := p.headerStyle.Render(fmt.Sprintf("Protobufs in %s", p.directory))
 	strs = append(strs, header)
@@ -119,7 +129,7 @@ func (p ProtoListPane) View() string {
 		strs = append(strs, p.ViewProto(i))
 	}
 
-	return p.style.Render(
+	return p.style.GetStyle(p.IsActiveTab).Render(
 		lipgloss.JoinVertical(
 			lipgloss.Top,
 			strs...,

@@ -21,11 +21,11 @@ protosocat when done will be able to serve as either the server
 
 - View and create protobufs based on the definitions
 - Send and receive over websocket
+- Scroll through message history
 
 ## Still need to do:
 
-- Scroll through messages
-- Add some nice styling
+- Add contextual help text
 
 ## Acknowledgements
 

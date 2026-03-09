@@ -3,6 +3,7 @@ package messages
 import (
 	"errors"
 	"protosocat/internal/colors"
+	"protosocat/internal/panes"
 	"protosocat/internal/protos"
 
 	"charm.land/bubbles/v2/viewport"
@@ -55,15 +56,96 @@ func (m OwnMessage) View() string {
 	return m.Text
 }
 
+type MessageRenderer struct {
+	gap           string
+	halfgap       string
+	ownStyle      lipgloss.Style
+	receivedStyle lipgloss.Style
+	infoStyle     lipgloss.Style
+	errorStyle    lipgloss.Style
+}
+
+func NewMessageRenderer() MessageRenderer {
+	return MessageRenderer{
+		ownStyle: lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(colors.PrimaryColor).
+			AlignHorizontal(lipgloss.Left),
+		receivedStyle: lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(colors.SecondaryColor).
+			AlignHorizontal(lipgloss.Left),
+		infoStyle: lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(colors.InfoColor).
+			AlignHorizontal(lipgloss.Center),
+		errorStyle: lipgloss.NewStyle().
+			AlignHorizontal(lipgloss.Center).
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(colors.ErrorBorderColor).
+			Foreground(colors.ErrorColor),
+	}
+}
+
+func (mr *MessageRenderer) SetViewportWidth(viewportWidth int) {
+	messageWidth := viewportWidth * 2 / 3
+	remWidth := viewportWidth - messageWidth
+	mr.gap = lipgloss.NewStyle().
+		Width(remWidth).
+		Render("")
+	mr.halfgap = lipgloss.NewStyle().
+		Width(remWidth / 2).
+		Render("")
+	mr.ownStyle = mr.ownStyle.Width(messageWidth)
+	mr.errorStyle = mr.errorStyle.Width(messageWidth)
+	mr.infoStyle = mr.infoStyle.Width(messageWidth)
+}
+
+func (mr MessageRenderer) ViewOwnMessage(msg string) string {
+	return lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		mr.ownStyle.Render(msg),
+		mr.gap,
+	)
+}
+
+func (mr MessageRenderer) ViewReceivedMessage(msg string) string {
+	return lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		mr.gap,
+		mr.receivedStyle.Render(msg),
+	)
+}
+
+func (mr MessageRenderer) ViewInfoMessage(msg string) string {
+	return lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		mr.halfgap,
+		mr.infoStyle.Render(msg),
+		mr.halfgap,
+	)
+}
+
+func (mr MessageRenderer) ViewErrorMessage(msg string) string {
+	return lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		mr.halfgap,
+		mr.errorStyle.Render(msg),
+		mr.halfgap,
+	)
+}
+
 type MessagePane struct {
-	style        lipgloss.Style
-	ReceiveProto protos.Message
-	SavedSent    chan string
-	Receive      chan []byte
-	Errors       chan error
-	Info         chan string
-	Messages     []MessageDisplay
-	viewport     viewport.Model
+	style           panes.ToggleStyle
+	ReceiveProto    protos.Message
+	SavedSent       chan string
+	Receive         chan []byte
+	Errors          chan error
+	Info            chan string
+	Messages        []MessageDisplay
+	viewport        viewport.Model
+	messageRenderer MessageRenderer
+	IsActiveTab     bool
 }
 
 func NewMessagePane(
@@ -75,26 +157,40 @@ func NewMessagePane(
 	receiveProto protos.Message,
 ) MessagePane {
 	return MessagePane{
-		style: lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(colors.BorderColor).
-			Padding(1).
-			Margin(1),
-		ReceiveProto: receiveProto,
-		Receive:      receiveChan,
-		Errors:       errorChan,
-		SavedSent:    savedSentChan,
-		Info:         infoChan,
-		viewport:     viewport.New(),
+		style: panes.ToggleStyle{
+			ActiveStyle: lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(colors.BorderColor).
+				Padding(1).
+				Margin(1),
+			InactiveStyle: lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(colors.InactiveColor).
+				Padding(1).
+				Margin(1),
+		},
+		ReceiveProto:    receiveProto,
+		Receive:         receiveChan,
+		Errors:          errorChan,
+		SavedSent:       savedSentChan,
+		Info:            infoChan,
+		viewport:        viewport.New(),
+		messageRenderer: NewMessageRenderer(),
 	}
+}
+
+func (mp *MessagePane) SetActive(active bool) {
+	mp.IsActiveTab = active
 }
 
 func (mp *MessagePane) UpdateSize(width int, height int) {
 	mp.style = mp.style.Width(width - 2).Height(height - 2)
 	verticalOverhead := mp.style.GetVerticalFrameSize()
 	horizontalOverhead := mp.style.GetHorizontalFrameSize()
+	viewportWidth := width - 2 - horizontalOverhead
 	mp.viewport.SetHeight(height - 2 - verticalOverhead)
-	mp.viewport.SetWidth(width - 2 - horizontalOverhead)
+	mp.viewport.SetWidth(viewportWidth)
+	mp.messageRenderer.SetViewportWidth(viewportWidth)
 }
 
 func ReceiveData(ch chan []byte) tea.Cmd {
@@ -164,86 +260,43 @@ func (mp MessagePane) Init() tea.Cmd {
 }
 
 func (mp MessagePane) Update(msg tea.Msg) (MessagePane, tea.Cmd) {
+	var contentUpdate string
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case DataReceived:
-		return mp, ParseData(msg.data, mp.ReceiveProto)
+		cmd = ParseData(msg.data, mp.ReceiveProto)
 	case ErrorReceived:
+		contentUpdate = mp.messageRenderer.ViewErrorMessage(msg.View())
 		mp.Messages = append(mp.Messages, msg)
-		return mp, ReceiveError(mp.Errors)
+		cmd = ReceiveError(mp.Errors)
 	case ReceivedMessage:
+		contentUpdate = mp.messageRenderer.ViewReceivedMessage(msg.View())
 		mp.Messages = append(mp.Messages, msg)
-		return mp, ReceiveData(mp.Receive)
+		cmd = ReceiveData(mp.Receive)
 	case OwnMessage:
+		contentUpdate = mp.messageRenderer.ViewOwnMessage(msg.View())
 		mp.Messages = append(mp.Messages, msg)
-		return mp, ReceiveSent(mp.SavedSent)
+		cmd = ReceiveSent(mp.SavedSent)
 	case InfoMessage:
+		contentUpdate = mp.messageRenderer.ViewInfoMessage(msg.View())
 		mp.Messages = append(mp.Messages, msg)
-		return mp, ReceiveInfo(mp.Info)
+		cmd = ReceiveInfo(mp.Info)
 	}
-	return mp, nil
+
+	if contentUpdate != "" {
+		newContent := lipgloss.JoinVertical(
+			lipgloss.Top,
+			mp.viewport.GetContent(),
+			contentUpdate,
+		)
+		mp.viewport.SetContent(newContent)
+		mp.viewport.GotoBottom()
+	} else if mp.IsActiveTab {
+		mp.viewport, cmd = mp.viewport.Update(msg)
+	}
+	return mp, cmd
 }
 
 func (mp MessagePane) View() string {
-	messageWidth := mp.viewport.Width() * 2 / 3
-	remWidth := mp.viewport.Width() - messageWidth
-	gap := lipgloss.NewStyle().
-		Width(remWidth).
-		Render("")
-	halfgap := lipgloss.NewStyle().
-		Width(remWidth / 2).
-		Render("")
-	strs := make([]string, len(mp.Messages))
-	for i, msg := range mp.Messages {
-		switch msg := msg.(type) {
-		case ErrorReceived:
-			strs[i] = lipgloss.JoinHorizontal(
-				lipgloss.Center,
-				halfgap,
-				lipgloss.NewStyle().
-					Width(messageWidth).
-					AlignHorizontal(lipgloss.Center).
-					Border(lipgloss.NormalBorder()).
-					BorderForeground(colors.BorderColor).
-					Foreground(colors.ErrorColor).
-					Render(msg.View()),
-				halfgap,
-			)
-		case ReceivedMessage:
-			strs[i] = lipgloss.JoinHorizontal(
-				lipgloss.Center,
-				gap,
-				lipgloss.NewStyle().
-					Width(messageWidth).
-					Border(lipgloss.NormalBorder()).
-					BorderForeground(colors.BorderColor).
-					AlignHorizontal(lipgloss.Left).
-					Render(msg.View()),
-			)
-		case OwnMessage:
-			strs[i] = lipgloss.JoinHorizontal(
-				lipgloss.Center,
-				lipgloss.NewStyle().
-					Width(messageWidth).
-					Border(lipgloss.NormalBorder()).
-					BorderForeground(colors.BorderColor).
-					AlignHorizontal(lipgloss.Left).
-					Render(msg.View()),
-				gap,
-			)
-		case InfoMessage:
-			strs[i] = lipgloss.JoinHorizontal(
-				lipgloss.Center,
-				halfgap,
-				lipgloss.NewStyle().
-					Width(messageWidth).
-					Border(lipgloss.NormalBorder()).
-					BorderForeground(colors.BorderColor).
-					AlignHorizontal(lipgloss.Center).
-					Render(msg.View()),
-				halfgap,
-			)
-		}
-	}
-	mp.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Top, strs...))
-	return mp.style.Render(mp.viewport.View())
+	return mp.style.GetStyle(mp.IsActiveTab).Render(mp.viewport.View())
 }

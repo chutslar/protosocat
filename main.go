@@ -24,6 +24,7 @@ type Model struct {
 	protoDetailsPane protodetails.ProtoDetailsPane
 	showDetails      bool
 	messagePane      messages.MessagePane
+	messagesActive   bool
 	width            int
 	height           int
 }
@@ -76,6 +77,9 @@ func NewModel(
 	protoDetailsPane := protodetails.NewProtoDetailsPane(sendChan, savedSent)
 	messagePane := messages.NewMessagePane(sendChan, receiveChan, errorChan, savedSent, infoChan, *receiveProtobuf)
 
+	protoListPane.SetActive(true)
+	protoDetailsPane.SetActive(true)
+
 	return &Model{
 		protoListPane:    protoListPane,
 		protoDetailsPane: protoDetailsPane,
@@ -103,6 +107,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "tab":
+			m.messagesActive = !m.messagesActive
+			m.messagePane.SetActive(m.messagesActive)
+			m.protoListPane.SetActive(!m.messagesActive)
+			m.protoDetailsPane.SetActive(!m.messagesActive)
 		}
 	case panes.SwitchToListPane:
 		m.protoDetailsPane.SetMessage(nil)
@@ -112,12 +121,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.showDetails = true
 	}
 
+	// Only the current active proto pane gets updates since their
+	// only updates are from user input. Messages pane gets updates
+	// even if inactive because it should be updated when messages are received.
 	var protoCmd tea.Cmd
 	var messageCmd tea.Cmd
-	if m.showDetails {
-		m.protoDetailsPane, protoCmd = m.protoDetailsPane.Update(msg)
-	} else {
-		m.protoListPane, protoCmd = m.protoListPane.Update(msg)
+	if !m.messagesActive {
+		if m.showDetails {
+			m.protoDetailsPane, protoCmd = m.protoDetailsPane.Update(msg)
+		} else {
+			m.protoListPane, protoCmd = m.protoListPane.Update(msg)
+		}
 	}
 	m.messagePane, messageCmd = m.messagePane.Update(msg)
 	return m, tea.Batch(protoCmd, messageCmd)

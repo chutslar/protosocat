@@ -108,26 +108,38 @@ type ProtoDetailsPane struct {
 	message            *protos.Message
 	rootField          *FieldInput
 	active             *FieldInput
-	style              lipgloss.Style
+	style              panes.ToggleStyle
 	createdMessage     *dynamicpb.Message
 	showCreatedMessage bool
 	messageError       error
 	viewport           viewport.Model
 	Send               chan []byte
 	SaveSent           chan string
+	IsActiveTab        bool
 }
 
 func NewProtoDetailsPane(sendChan chan []byte, saveSent chan string) ProtoDetailsPane {
 	return ProtoDetailsPane{
-		style: lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(colors.BorderColor).
-			Padding(1).
-			Margin(1),
+		style: panes.ToggleStyle{
+			ActiveStyle: lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(colors.BorderColor).
+				Padding(1).
+				Margin(1),
+			InactiveStyle: lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(colors.InactiveColor).
+				Padding(1).
+				Margin(1),
+		},
 		viewport: viewport.New(),
 		Send:     sendChan,
 		SaveSent: saveSent,
 	}
+}
+
+func (pd *ProtoDetailsPane) SetActive(active bool) {
+	pd.IsActiveTab = active
 }
 
 func GetInputForMessage(message protoreflect.MessageDescriptor) *FieldInput {
@@ -488,6 +500,7 @@ func (pd ProtoDetailsPane) Update(msg tea.Msg) (ProtoDetailsPane, tea.Cmd) {
 
 				pd.Send <- binary
 				pd.SaveSent <- string(json)
+				return pd, nil
 			} else {
 				err := pd.CreateNewMessageFromInputs()
 				if err != nil {
@@ -509,6 +522,7 @@ func (pd ProtoDetailsPane) Update(msg tea.Msg) (ProtoDetailsPane, tea.Cmd) {
 					pd.active.Input.Focus()
 				}
 			}
+			return pd, nil
 		case "space":
 			if pd.active != nil && pd.active.parent != nil {
 				_, isCheckmark := pd.active.Input.(Checkmark)
@@ -519,6 +533,7 @@ func (pd ProtoDetailsPane) Update(msg tea.Msg) (ProtoDetailsPane, tea.Cmd) {
 					if pd.active != nil && pd.active.Input != nil {
 						pd.active.Input.Focus()
 					}
+					return pd, nil
 				}
 			}
 		}
@@ -661,7 +676,7 @@ func (pd ProtoDetailsPane) ViewField(field *FieldInput) ViewFieldResult {
 
 func (pd ProtoDetailsPane) View() string {
 	if pd.rootField == nil {
-		return pd.style.Render("Invalid protobuf")
+		return pd.style.GetStyle(pd.IsActiveTab).Render("Invalid protobuf")
 	}
 
 	header := lipgloss.NewStyle().Underline(true).Render(string(pd.message.Descriptor.FullName()))
@@ -704,5 +719,6 @@ func (pd ProtoDetailsPane) View() string {
 		main = pd.viewport.View()
 	}
 
-	return pd.style.Render(lipgloss.JoinVertical(lipgloss.Top, header, main))
+	return pd.style.GetStyle(pd.IsActiveTab).
+		Render(lipgloss.JoinVertical(lipgloss.Top, header, main))
 }
