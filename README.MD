@@ -1,4 +1,4 @@
-# protosocat (WIP)
+# protosocat
 
 This is a TUI interface forsending and receiving
 protobuf messages over websocket.
