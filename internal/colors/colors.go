@@ -15,3 +15,7 @@ const InfoColor = lipgloss.ANSIColor(30)
 const PrimaryColor = lipgloss.ANSIColor(115)
 
 const SecondaryColor = lipgloss.ANSIColor(217)
+
+const HelpKeyColor = lipgloss.ANSIColor(252)
+
+const HelpDescColor = lipgloss.ANSIColor(248)

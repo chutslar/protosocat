@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"protosocat/internal/colors"
 	"protosocat/internal/panes"
 	"protosocat/internal/panes/messages"
 	"protosocat/internal/panes/protodetails"
@@ -14,10 +15,26 @@ import (
 	"protosocat/internal/protos"
 	"protosocat/internal/ws"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	flag "github.com/spf13/pflag"
 )
+
+type Help struct {
+	keys []key.Binding
+}
+
+func (h Help) ShortHelp() []key.Binding {
+	return h.keys
+}
+
+func (h Help) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		h.keys,
+	}
+}
 
 type Model struct {
 	protoListPane    protolist.ProtoListPane
@@ -27,6 +44,8 @@ type Model struct {
 	messagesActive   bool
 	width            int
 	height           int
+	genericKeys      []key.Binding
+	help             help.Model
 }
 
 func NewModel(
@@ -80,11 +99,23 @@ func NewModel(
 	protoListPane.SetActive(true)
 	protoDetailsPane.SetActive(true)
 
+	genericKeys := []key.Binding{
+		key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("Tab", "switch pane"),
+		),
+	}
+
+	help := help.New()
+	help.Styles.ShortKey = help.Styles.ShortKey.Foreground(colors.HelpKeyColor)
+	help.Styles.ShortDesc = help.Styles.ShortDesc.Foreground(colors.HelpDescColor)
 	return &Model{
 		protoListPane:    protoListPane,
 		protoDetailsPane: protoDetailsPane,
 		showDetails:      false,
 		messagePane:      messagePane,
+		help:             help,
+		genericKeys:      genericKeys,
 	}, nil
 }
 
@@ -98,11 +129,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
+		paneHeight := m.height - 2
 		halfWidth := m.width / 2
-		m.protoListPane.UpdateSize(halfWidth, m.height)
-		m.protoDetailsPane.UpdateSize(halfWidth, m.height)
-		m.messagePane.UpdateSize(halfWidth, m.height)
-		m.messagePane.UpdateSize(halfWidth, m.height)
+		m.protoListPane.UpdateSize(halfWidth, paneHeight)
+		m.protoDetailsPane.UpdateSize(halfWidth, paneHeight)
+		m.messagePane.UpdateSize(halfWidth, paneHeight)
+		m.help.SetWidth(m.width)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -149,11 +181,24 @@ func (m Model) View() tea.View {
 		protoView = m.protoListPane.View()
 	}
 
-	s := lipgloss.JoinHorizontal(
+	main := lipgloss.JoinHorizontal(
 		lipgloss.Center,
 		protoView,
 		m.messagePane.View(),
 	)
+
+	keys := m.genericKeys
+	if !m.messagesActive && m.showDetails {
+		keys = append(keys, m.protoDetailsPane.GetHelp()...)
+	}
+	help_wrapper := Help{keys}
+
+	s := lipgloss.JoinVertical(
+		lipgloss.Top,
+		main,
+		m.help.View(help_wrapper),
+	)
+
 	v := tea.NewView(s)
 	v.AltScreen = true
 	return v

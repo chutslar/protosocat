@@ -9,6 +9,7 @@ import (
 	"protosocat/internal/panes"
 	"protosocat/internal/protos"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -511,7 +512,7 @@ func (pd ProtoDetailsPane) Update(msg tea.Msg) (ProtoDetailsPane, tea.Cmd) {
 				pd.showCreatedMessage = true
 				return pd, nil
 			}
-		case "ctrl+e":
+		case "ctrl+r":
 			if pd.active != nil {
 				resetAncestor := pd.active.CascadeOneofReset()
 				if resetAncestor != nil {
@@ -674,6 +675,40 @@ func (pd ProtoDetailsPane) ViewField(field *FieldInput) ViewFieldResult {
 	}
 }
 
+func (pd ProtoDetailsPane) GetHelp() []key.Binding {
+	var keys []key.Binding
+
+	keys = append(keys, key.NewBinding(
+		key.WithKeys("ctrl+b"),
+		key.WithHelp("Ctrl+B", "back"),
+	))
+	if pd.showCreatedMessage && pd.messageError != nil {
+		keys = append(keys, key.NewBinding(
+			key.WithKeys("ctrl+s"),
+			key.WithHelp("Ctrl+S", "send"),
+		))
+	} else if pd.active != nil {
+		keys = append(keys, key.NewBinding(
+			key.WithKeys("ctrl+s"),
+			key.WithHelp("Ctrl+S", "create message"),
+		))
+		_, isCheckmark := pd.active.Input.(Checkmark)
+		if isCheckmark {
+			keys = append(keys, key.NewBinding(
+				key.WithKeys("space"),
+				key.WithHelp("Space", "toggle"),
+			))
+		} else if pd.active.parent.IsOneof() {
+			keys = append(keys, key.NewBinding(
+				key.WithKeys("ctrl+r"),
+				key.WithHelp("Ctrl+R", "reset oneof"),
+			))
+		}
+	}
+
+	return keys
+}
+
 func (pd ProtoDetailsPane) View() string {
 	if pd.rootField == nil {
 		return pd.style.GetStyle(pd.IsActiveTab).Render("Invalid protobuf")
@@ -695,7 +730,12 @@ func (pd ProtoDetailsPane) View() string {
 			if err != nil {
 				main = fmt.Sprintf("Error with protobuf: %v", err)
 			} else {
-				main = string(output)
+				jsonString := string(output)
+				main = lipgloss.JoinVertical(
+					lipgloss.Top,
+					"Created message:",
+					jsonString,
+				)
 			}
 		}
 	} else {
